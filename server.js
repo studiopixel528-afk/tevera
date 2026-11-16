@@ -12,7 +12,7 @@ const httpServer = http.createServer((req, res) => {
   });
 });
 
-const io = new Server(httpServer, { cors: { origin: '*' } });
+const io = new Server(httpServer, { cors: { origin: '*' }, maxHttpBufferSize: 1e8 });
 const online = {};
 const ALL_USERS_FILE = path.join(__dirname, 'users.json');
 const AVATARS_FILE = path.join(__dirname, 'avatars.json');
@@ -81,7 +81,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('message', (data) => {
-    sendTo(data.to, 'message', { from: data.from, text: data.text || '', audio: data.audio || null, audioMime: data.audioMime || null });
+    const hasAudio = data.audio !== undefined && data.audio !== null && data.audio !== '';
+    const byteLen = hasAudio ? (data.audio.byteLength !== undefined ? data.audio.byteLength : data.audio.length) : 'нет';
+    console.log(`[message] to=${data.to} from=${data.from} audio=${hasAudio} size=${byteLen}`);
+    sendTo(data.to, 'message', { from: data.from, text: data.text || '', audio: hasAudio ? data.audio : null, audioMime: data.audioMime || null });
   });
 
   socket.on('call-user', (data) => sendTo(data.to, 'incoming-call', { from: data.from }));
