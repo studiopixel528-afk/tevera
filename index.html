@@ -38,6 +38,10 @@
     #new-chat-type button { flex:1; padding:5px; cursor:pointer; border:1px solid var(--border); background:var(--msg); color:var(--text); border-radius:6px; }
     #new-chat-type button.selected { background:var(--msg-own); color:#fff; }
     #new-chat-name { width:100%; padding:6px; }
+    .member-option { display:flex; align-items:center; gap:8px; padding:6px 8px; cursor:pointer; }
+    .member-option:hover { background:var(--msg); }
+    .member-option img { width:24px; height:24px; border-radius:50%; object-fit:cover; }
+    .member-option span { font-size:13px; }
 
     #main { flex:1; display:flex; flex-direction:column; min-width:0; }
     #chat-title { padding:12px 14px; font-weight:bold; font-size:16px; border-bottom:1px solid var(--border); background:var(--bg); display:flex; align-items:center; justify-content:space-between; }
@@ -86,6 +90,11 @@
     <div id="login-box">
       <h2>Добро пожаловать</h2>
       <p style="font-size:13px;">Придумайте свой юзернейм (например @WEST)</p>
+      <input type="file" id="login-avatar-input" accept="image/*" style="display:none;">
+      <div style="display:flex; justify-content:center; margin:10px 0;">
+        <img id="login-avatar" onclick="document.getElementById('login-avatar-input').click()" title="Выберите аватарку" style="width:80px; height:80px; border-radius:50%; object-fit:cover; cursor:pointer; border:2px solid var(--border); background:var(--msg);">
+      </div>
+      <p style="font-size:12px; color:var(--text); opacity:0.7; margin:0 0 10px;">Выберите аватарку (кликните по кружку)</p>
       <input id="login-input" placeholder="Введите юзернейм..." maxlength="30">
       <div id="login-err"></div>
       <button id="login-btn">Войти</button>
@@ -105,6 +114,9 @@
       <div id="new-chat-box">
         <div id="new-chat-type"><button data-type="channel">Канал</button><button data-type="group" class="selected">Группа</button></div>
         <input id="new-chat-name" placeholder="Введите название...">
+        <div id="member-select" style="display:none; max-height:120px; overflow-y:auto; border:1px solid var(--border); margin-top:6px; border-radius:6px;">
+          <div style="padding:4px 8px; font-size:11px; opacity:0.7;">Выберите участников:</div>
+        </div>
       </div>
       <div id="chat-list"></div>
     </div>
@@ -149,11 +161,14 @@
     const addBtn = document.getElementById('add-btn');
     const newChatBox = document.getElementById('new-chat-box');
     const newChatName = document.getElementById('new-chat-name');
+    const memberSelect = document.getElementById('member-select');
     const typeButtons = document.querySelectorAll('#new-chat-type button');
     const loginScreen = document.getElementById('login-screen');
     const loginInput = document.getElementById('login-input');
     const loginBtn = document.getElementById('login-btn');
     const loginErr = document.getElementById('login-err');
+    const loginAvatar = document.getElementById('login-avatar');
+    const loginAvatarInput = document.getElementById('login-avatar-input');
     const userSearch = document.getElementById('user-search');
     const searchResults = document.getElementById('search-results');
     const myNameEl = document.getElementById('my-name');
@@ -201,6 +216,10 @@
           if (res && res.ok) {
             myName = res.username;
             localStorage.setItem(lsSelfKey, myName);
+            if (loginAvatarData) {
+              myAvatarEl.src = loginAvatarData;
+              socket.emit('set-avatar', { avatar: loginAvatarData });
+            }
             enterApp();
           } else {
             socket.close();
@@ -230,8 +249,8 @@
       }
     }
 
-    function createChat(name, type) {
-      const chat = { name: (type === 'channel' ? '📢 ' : '👥 ') + name, type: type, owner: myName, messages: [] };
+    function createChat(name, type, members) {
+      const chat = { name: (type === 'channel' ? '📢 ' : '👥 ') + name, type: type, owner: myName, members: members || [], messages: [] };
       chats.push(chat);
       renderChats();
       openChat(chat);
@@ -284,8 +303,19 @@
       socket.on('message', (data) => {
         const target = chats.find((c) => peerName(c).toLowerCase() === String(data.from).toLowerCase());
         if (!target) return;
-        if (data.audio) target.messages.push({ type: 'audio', url: data.audio, own: false, sender: data.from });
-        else target.messages.push({ type: 'text', text: data.text, own: false, sender: data.from });
+        if (data.audio !== undefined && data.audio !== null && data.audio !== '') {
+          let url = data.audio;
+          try {
+            const bytes = new Uint8Array(data.audio);
+            const blob = new Blob([bytes], { type: data.audioMime || 'audio/webm' });
+            url = URL.createObjectURL(blob);
+          } catch (e) {
+            url = typeof data.audio === 'string' ? data.audio : url;
+          }
+          target.messages.push({ type: 'audio', url: url, own: false, sender: data.from });
+        } else {
+          target.messages.push({ type: 'text', text: data.text || '', own: false, sender: data.from });
+        }
         if (target === currentChat) renderMessages();
       });
       socket.on('incoming-call', (data) => { currentPeer = data.from; caller = false; callAnswer.style.display = 'flex'; callEnd.innerHTML = '📞'; callStatus.textContent = 'Входящий звонок от @' + data.from; callPanel.style.display = 'flex'; });
@@ -318,7 +348,7 @@
     callAnswer.onclick = () => {
       callAnswer.style.display = 'none';
       callEnd.innerHTML = '📞';
-      if (socket) socket.emit('call-answer', { to: currentPeer, from: myName, answer: pendingAnswer });
+      if (socket && pendingAnswer) socket.emit('call-answer', { to: currentPeer, from: myName, answer: pendingAnswer });
       startCallTimer();
     };
     callEnd.onclick = () => { if (socket && currentPeer) socket.emit('call-end', { to: currentPeer, from: myName }); endCallUI(); };
@@ -357,7 +387,13 @@
     }
     function setupPeer() {
       navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => { localStream = stream; stream.getTracks().forEach((t) => pc.addTrack(t, stream)); }).catch((e) => alert('Нет микрофона: ' + e.message));
-      pc.ontrack = (ev) => { const audio = new Audio(); audio.srcObject = ev.streams[0]; audio.play(); };
+      const remoteAudio = new Audio();
+      remoteAudio.autoplay = true;
+      remoteAudio.id = 'remote-audio';
+      pc.ontrack = (ev) => {
+        remoteAudio.srcObject = ev.streams[0];
+        remoteAudio.play().catch(() => {});
+      };
       pc.onicecandidate = (e) => { if (e.candidate && socket) socket.emit('ice-candidate', { to: currentPeer, from: myName, candidate: e.candidate }); };
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected') {
@@ -448,14 +484,65 @@
     send.addEventListener('click', sendAll);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMsg(); });
 
-    addBtn.onclick = () => { newChatBox.style.display = newChatBox.style.display === 'none' ? 'block' : 'none'; if (newChatBox.style.display === 'block') newChatName.focus(); };
-    typeButtons.forEach((b) => { b.onclick = () => { typeButtons.forEach((x) => x.classList.remove('selected')); b.classList.add('selected'); selectedType = b.dataset.type; }; });
-    newChatName.addEventListener('keydown', (e) => { if (e.key === 'Enter' && newChatName.value.trim()) { createChat(newChatName.value.trim(), selectedType); newChatName.value = ''; newChatBox.style.display = 'none'; } });
+    function fillMemberSelect() {
+      memberSelect.innerHTML = '';
+      const title = document.createElement('div');
+      title.style.cssText = 'padding:4px 8px; font-size:11px; opacity:0.7;';
+      title.textContent = 'Выберите участников:';
+      memberSelect.appendChild(title);
+      const candidates = onlineUsers.filter((u) => u.toLowerCase() !== myName.toLowerCase());
+      if (candidates.length === 0) {
+        const none = document.createElement('div');
+        none.style.cssText = 'padding:4px 8px; font-size:12px; opacity:0.6;';
+        none.textContent = 'Нет доступных друзей (никто не онлайн)';
+        memberSelect.appendChild(none);
+      } else {
+        candidates.forEach((u) => {
+          const label = document.createElement('label');
+          label.className = 'member-option';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.value = u; cb.className = 'member-cb';
+          const img = document.createElement('img');
+          img.src = userAvatars[u.toLowerCase()] || myDefaultAvatar;
+          const sp = document.createElement('span'); sp.textContent = '@' + u;
+          label.appendChild(cb); label.appendChild(img); label.appendChild(sp);
+          memberSelect.appendChild(label);
+        });
+      }
+    }
+
+    addBtn.onclick = () => {
+      newChatBox.style.display = newChatBox.style.display === 'none' ? 'block' : 'none';
+      if (newChatBox.style.display === 'block') {
+        newChatName.focus();
+        if (selectedType === 'group') { memberSelect.style.display = 'block'; fillMemberSelect(); }
+        else memberSelect.style.display = 'none';
+      }
+    };
+    typeButtons.forEach((b) => { b.onclick = () => { typeButtons.forEach((x) => x.classList.remove('selected')); b.classList.add('selected'); selectedType = b.dataset.type; if (newChatBox.style.display === 'block') { if (selectedType === 'group') { memberSelect.style.display = 'block'; fillMemberSelect(); } else memberSelect.style.display = 'none'; } }; });
+    newChatName.addEventListener('keydown', (e) => { if (e.key === 'Enter' && newChatName.value.trim()) {
+      const members = Array.from(document.querySelectorAll('.member-cb:checked')).map((c) => c.value);
+      createChat(newChatName.value.trim(), selectedType, members);
+      newChatName.value = '';
+      newChatBox.style.display = 'none';
+      memberSelect.style.display = 'none';
+    } });
 
     let onlineUsers = [];
     let userAvatars = {};
     const myDefaultAvatar = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#ccc"/><text x="50" y="55" font-size="40" text-anchor="middle" fill="#fff">👤</text></svg>');
     myAvatarEl.src = myDefaultAvatar;
+    let loginAvatarData = null;
+    loginAvatar.src = myDefaultAvatar;
+
+    loginAvatarInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => { loginAvatar.src = reader.result; loginAvatarData = reader.result; };
+      reader.readAsDataURL(file);
+      loginAvatarInput.value = '';
+    };
 
     avatarInput.onchange = (e) => {
       const file = e.target.files[0];
