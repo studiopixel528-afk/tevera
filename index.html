@@ -112,6 +112,12 @@
         </span>
       </div>
       <div id="chats-view">
+        <div id="new-msg-row" style="display:none; padding:8px 10px; border-bottom:1px solid var(--border);">
+          <button id="new-msg-btn" style="width:100%; padding:8px; cursor:pointer; position:relative; border:1px solid var(--border); background:var(--msg); color:var(--text); border-radius:8px; font-size:14px;">
+            Новые
+            <span id="new-msg-count" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:#007bff; color:#fff; border-radius:50%; min-width:20px; height:20px; font-size:12px; display:flex; align-items:center; justify-content:center; padding:0 5px;"></span>
+          </button>
+        </div>
         <div id="search-row"><input id="user-search" placeholder="🔍 Найти по юзернейму или номеру..."></div>
         <div id="search-results"></div>
         <div id="who">
@@ -127,6 +133,7 @@
           </div>
         </div>
         <div id="chat-list"></div>
+        <div id="new-chats-panel" style="display:none; padding:8px; overflow-y:auto;"></div>
       </div>
 
       <!-- Окно Настройки -->
@@ -213,6 +220,10 @@
     const settingsPhone = document.getElementById('settings-phone');
     const settingsSave = document.getElementById('settings-save');
     const requestsList = document.getElementById('requests-list');
+    const newMsgBtn = document.getElementById('new-msg-btn');
+    const newMsgRow = document.getElementById('new-msg-row');
+    const newMsgCount = document.getElementById('new-msg-count');
+    const newChatsPanel = document.getElementById('new-chats-panel');
     const myNameEl = document.getElementById('my-name');
     const myAvatarEl = document.getElementById('my-avatar');
     const avatarInput = document.getElementById('avatar-input');
@@ -230,6 +241,7 @@
     let socket = null;
     let myPhone = localStorage.getItem('tevera-phone') || '';
     let pendingRequests = [];
+    let newMsgContacts = [];
 
     function saveUsers() { localStorage.setItem(lsUsersKey, JSON.stringify(allUsers)); }
     function normalize(u) { return (u || '').trim().replace(/^@/, '').replace(/\s+/g, ' '); }
@@ -341,6 +353,63 @@
       });
     }
 
+    function updateNewCounter() {
+      const n = newMsgContacts.length;
+      newMsgRow.style.display = n > 0 ? 'block' : 'none';
+      newMsgCount.textContent = n;
+    }
+    function markNew(sender) {
+      const low = sender.toLowerCase();
+      if (low === myName.toLowerCase()) return;
+      if (!newMsgContacts.some((s) => s.toLowerCase() === low)) {
+        newMsgContacts.push(sender);
+      }
+      updateNewCounter();
+      if (newChatsPanel.style.display === 'block') renderNewChats();
+    }
+    function clearNewFor(sender) {
+      const low = sender.toLowerCase();
+      newMsgContacts = newMsgContacts.filter((s) => s.toLowerCase() !== low);
+      updateNewCounter();
+      renderNewChats();
+    }
+    function renderNewChats() {
+      newChatsPanel.innerHTML = '';
+      if (newMsgContacts.length === 0) { newChatsPanel.innerHTML = '<div style="padding:8px; opacity:0.7;">Нет новых сообщений</div>'; return; }
+      newMsgContacts.forEach((sender) => {
+        const item = document.createElement('div');
+        item.className = 'chat-item';
+        item.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px; cursor:pointer; border-bottom:1px solid var(--border);';
+        const img = document.createElement('img');
+        img.className = 'avatar';
+        img.src = userAvatars[sender.toLowerCase()] || myDefaultAvatar;
+        const sp = document.createElement('span'); sp.textContent = '@' + sender;
+        item.appendChild(img); item.appendChild(sp);
+        item.onclick = () => { openChatByName(sender); };
+        newChatsPanel.appendChild(item);
+      });
+    }
+    function openChatByName(name) {
+      let chat = chats.find((c) => peerName(c).toLowerCase() === name.toLowerCase());
+      if (!chat) chat = createChat(name, 'group');
+      openChat(chat);
+      clearNewFor(name);
+      chatsView.style.display = 'block';
+      newChatsPanel.style.display = 'none';
+      renderChats();
+    }
+    newMsgBtn.onclick = () => {
+      if (newChatsPanel.style.display === 'block') {
+        newChatsPanel.style.display = 'none';
+        chatList.style.display = '';
+        renderChats();
+      } else {
+        renderNewChats();
+        chatList.style.display = 'none';
+        newChatsPanel.style.display = 'block';
+      }
+    };
+
     function createChat(name, type, members) {
       const chat = { id: 'local_' + Date.now() + Math.floor(Math.random()*1000), name: (type === 'channel' ? '📢 ' : '👥 ') + name, type: type, owner: myName, members: members || [], messages: [] };
       chats.push(chat);
@@ -379,6 +448,8 @@
     function openChat(chat) {
       currentChat = chat;
       chatTitleText.textContent = chat.name;
+      const peer = peerName(chat);
+      clearNewFor(peer);
       renderChats();
       renderMessages();
     }
@@ -422,6 +493,7 @@
           target.messages.push({ type: 'text', text: data.text || '', own: false, sender: data.from });
         }
         if (target === currentChat) renderMessages();
+        else markNew(data.from);
       });
       socket.on('incoming-call', (data) => { currentPeer = data.from; caller = false; callAnswer.style.display = 'flex'; callEnd.innerHTML = '📞'; callStatus.textContent = 'Входящий звонок от @' + data.from; callPanel.style.display = 'flex'; });
       socket.on('call-offer', (data) => { currentPeer = data.from; answerOffer(data.offer); });
