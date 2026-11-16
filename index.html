@@ -103,22 +103,52 @@
 
   <div id="app">
     <div id="sidebar">
-      <div id="sidebar-head"><span>Чаты</span><button id="add-btn" title="Добавить чат">+</button></div>
-      <div id="search-row"><input id="user-search" placeholder="🔍 Найти по юзернейму..."></div>
-      <div id="search-results"></div>
-      <div id="who">
-        <input type="file" id="avatar-input" accept="image/*" style="display:none;">
-        <img id="my-avatar" title="Нажмите, чтобы сменить аватарку" onclick="document.getElementById('avatar-input').click()" style="cursor:pointer;">
-        <div>Вы вошли как <b id="my-name"></b></div>
+      <div id="sidebar-head">
+        <button id="chats-tab" title="Чаты" style="background:none; border:none; color:var(--text); font-weight:bold; font-size:15px; padding:4px 8px; cursor:pointer;">Чаты</button>
+        <span style="display:flex; gap:6px;">
+          <button id="settings-tab" title="Настройки">⚙️</button>
+          <button id="requests-tab" title="Запросы">❓</button>
+          <button id="add-btn" title="Добавить чат">+</button>
+        </span>
       </div>
-      <div id="new-chat-box">
-        <div id="new-chat-type"><button data-type="channel">Канал</button><button data-type="group" class="selected">Группа</button></div>
-        <input id="new-chat-name" placeholder="Введите название...">
-        <div id="member-select" style="display:none; max-height:120px; overflow-y:auto; border:1px solid var(--border); margin-top:6px; border-radius:6px;">
-          <div style="padding:4px 8px; font-size:11px; opacity:0.7;">Выберите участников:</div>
+      <div id="chats-view">
+        <div id="search-row"><input id="user-search" placeholder="🔍 Найти по юзернейму или номеру..."></div>
+        <div id="search-results"></div>
+        <div id="who">
+          <input type="file" id="avatar-input" accept="image/*" style="display:none;">
+          <img id="my-avatar" title="Нажмите, чтобы сменить аватарку" onclick="document.getElementById('avatar-input').click()" style="cursor:pointer;">
+          <div>Вы вошли как <b id="my-name"></b></div>
         </div>
+        <div id="new-chat-box">
+          <div id="new-chat-type"><button data-type="channel">Канал</button><button data-type="group" class="selected">Группа</button></div>
+          <input id="new-chat-name" placeholder="Введите название...">
+          <div id="member-select" style="display:none; max-height:120px; overflow-y:auto; border:1px solid var(--border); margin-top:6px; border-radius:6px;">
+            <div style="padding:4px 8px; font-size:11px; opacity:0.7;">Выберите участников:</div>
+          </div>
+        </div>
+        <div id="chat-list"></div>
       </div>
-      <div id="chat-list"></div>
+
+      <!-- Окно Настройки -->
+      <div id="settings-view" style="display:none; padding:14px;">
+        <h3 style="margin:0 0 14px;">Настройки</h3>
+        <label style="font-size:13px;">Аватарка</label>
+        <div style="display:flex; justify-content:center; margin:8px 0;">
+          <img id="settings-avatar" onclick="document.getElementById('settings-avatar-input').click()" title="Сменить аватарку" style="width:80px; height:80px; border-radius:50%; object-fit:cover; cursor:pointer; border:2px solid var(--border); background:var(--msg);">
+          <input type="file" id="settings-avatar-input" accept="image/*" style="display:none;">
+        </div>
+        <label style="font-size:13px;">Юзернейм</label>
+        <input id="settings-username" placeholder="Юзернейм" style="width:100%; padding:8px; margin:6px 0 12px;">
+        <label style="font-size:13px;">Номер телефона</label>
+        <input id="settings-phone" placeholder="+7..." style="width:100%; padding:8px; margin:6px 0 12px;">
+        <button id="settings-save" style="width:100%; padding:10px;">Сохранить</button>
+      </div>
+
+      <!-- Окно Запросы (сообщения от незнакомцев) -->
+      <div id="requests-view" style="display:none; overflow-y:auto;">
+        <div style="padding:10px; font-weight:bold; border-bottom:1px solid var(--border);">Запросы</div>
+        <div id="requests-list" style="padding:8px;"></div>
+      </div>
     </div>
 
     <div id="main">
@@ -171,6 +201,18 @@
     const loginAvatarInput = document.getElementById('login-avatar-input');
     const userSearch = document.getElementById('user-search');
     const searchResults = document.getElementById('search-results');
+    const settingsTab = document.getElementById('settings-tab');
+    const requestsTab = document.getElementById('requests-tab');
+    const chatsTab = document.getElementById('chats-tab');
+    const chatsView = document.getElementById('chats-view');
+    const settingsView = document.getElementById('settings-view');
+    const requestsView = document.getElementById('requests-view');
+    const settingsAvatar = document.getElementById('settings-avatar');
+    const settingsAvatarInput = document.getElementById('settings-avatar-input');
+    const settingsUsername = document.getElementById('settings-username');
+    const settingsPhone = document.getElementById('settings-phone');
+    const settingsSave = document.getElementById('settings-save');
+    const requestsList = document.getElementById('requests-list');
     const myNameEl = document.getElementById('my-name');
     const myAvatarEl = document.getElementById('my-avatar');
     const avatarInput = document.getElementById('avatar-input');
@@ -186,6 +228,8 @@
     let currentChat = null;
     let selectedType = 'group';
     let socket = null;
+    let myPhone = localStorage.getItem('tevera-phone') || '';
+    let pendingRequests = [];
 
     function saveUsers() { localStorage.setItem(lsUsersKey, JSON.stringify(allUsers)); }
     function normalize(u) { return (u || '').trim().replace(/^@/, '').replace(/\s+/g, ' '); }
@@ -195,6 +239,8 @@
       loginScreen.style.display = 'none';
       document.getElementById('app').style.display = 'flex';
       myNameEl.textContent = myName;
+      settingsUsername.value = myName.replace(/^@/, '');
+      settingsPhone.value = myPhone;
       connectServer();
       chats.length = 0;
       createChat('Главный чат', 'group');
@@ -249,11 +295,64 @@
       }
     }
 
+    // ===== Вкладки Настройки / Запросы =====
+    function showView(view) {
+      chatsView.style.display = (view === 'chats') ? 'block' : 'none';
+      settingsView.style.display = (view === 'settings') ? 'block' : 'none';
+      requestsView.style.display = (view === 'requests') ? 'block' : 'none';
+    }
+    chatsTab.onclick = () => { showView('chats'); };
+    settingsTab.onclick = () => { settingsAvatar.src = myAvatarEl.src; settingsUsername.value = myName.replace(/^@/,''); settingsPhone.value = myPhone; showView('settings'); };
+    requestsTab.onclick = () => { showView('requests'); renderRequests(); };
+    settingsAvatarInput.onchange = (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { settingsAvatar.src = r.result; myAvatarEl.src = r.result; if (socket) socket.emit('set-avatar', { avatar: r.result }); };
+      r.readAsDataURL(f);
+      settingsAvatarInput.value = '';
+    };
+    settingsSave.onclick = () => {
+      const newName = normalize(settingsUsername.value);
+      const newPhone = settingsPhone.value.trim();
+      if (newName) {
+        myName = newName;
+        localStorage.setItem(lsSelfKey, newName);
+        if (socket) socket.emit('rename-user', { username: newName });
+        myNameEl.textContent = newName;
+      }
+      myPhone = newPhone;
+      localStorage.setItem('tevera-phone', newPhone);
+      if (socket) socket.emit('set-phone', { phone: newPhone });
+      showView('chats');
+    };
+    function renderRequests() {
+      requestsList.innerHTML = '';
+      if (pendingRequests.length === 0) { requestsList.textContent = 'Нет новых запросов'; return; }
+      pendingRequests.forEach((r) => {
+        const item = document.createElement('div');
+        item.style.cssText = 'display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid var(--border); cursor:pointer;';
+        item.innerHTML = '<span>@' + r.sender + '</span>';
+        const btn = document.createElement('button');
+        btn.textContent = 'Открыть чат';
+        btn.onclick = () => { createChat(r.sender, 'group'); showView('chats'); };
+        item.appendChild(btn);
+        requestsList.appendChild(item);
+      });
+    }
+
     function createChat(name, type, members) {
-      const chat = { name: (type === 'channel' ? '📢 ' : '👥 ') + name, type: type, owner: myName, members: members || [], messages: [] };
+      const chat = { id: 'local_' + Date.now() + Math.floor(Math.random()*1000), name: (type === 'channel' ? '📢 ' : '👥 ') + name, type: type, owner: myName, members: members || [], messages: [] };
       chats.push(chat);
       renderChats();
       openChat(chat);
+    }
+    function addServerGroup(g) {
+      const existing = chats.find((c) => c.id === g.id);
+      if (existing) return;
+      const chat = { id: g.id, name: (g.type === 'channel' ? '📢 ' : '👥 ') + g.name, type: g.type, owner: g.owner, members: g.members || [], messages: [] };
+      chats.push(chat);
+      renderChats();
     }
     function renderChats() {
       chatList.innerHTML = '';
@@ -301,8 +400,14 @@
       if (socket._hooked) return;
       socket._hooked = true;
       socket.on('message', (data) => {
-        const target = chats.find((c) => peerName(c).toLowerCase() === String(data.from).toLowerCase());
-        if (!target) return;
+        const wasExisting = chats.some((c) => peerName(c).toLowerCase() === String(data.from).toLowerCase());
+        let target = chats.find((c) => peerName(c).toLowerCase() === String(data.from).toLowerCase());
+        if (!target) {
+          target = createChat(data.from, 'group');
+          if (!pendingRequests.some((r) => r.sender.toLowerCase() === data.from.toLowerCase())) {
+            pendingRequests.push({ sender: data.from });
+          }
+        }
         if (data.audio !== undefined && data.audio !== null && data.audio !== '') {
           let url = data.audio;
           try {
@@ -324,11 +429,37 @@
       socket.on('ice-candidate', (data) => { if (pc) pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {}); });
       socket.on('call-ended', () => endCallUI());
       socket.on('user-list', (list) => {
-        if (list && list.users) { onlineUsers = list.users || []; userAvatars = list.avatars || {}; }
-        else { onlineUsers = list || []; userAvatars = {}; }
+        if (list && list.users) { onlineUsers = list.users || []; userAvatars = list.avatars || {}; userPhones = list.phones || {}; }
+        else { onlineUsers = list || []; userAvatars = {}; userPhones = {}; }
         renderChats();
       });
+      socket.on('renamed', (d) => { myName = d.username; myNameEl.textContent = myName; localStorage.setItem(lsSelfKey, myName); });
+      socket.on('rename-fail', () => { alert('Этот юзернейм уже занят'); });
       socket.on('my-avatar', (a) => { if (myAvatarEl) myAvatarEl.src = a || myDefaultAvatar; });
+      socket.on('groups-list', (list) => {
+        (list || []).forEach((g) => addServerGroup(g));
+      });
+      socket.on('group-invite', (g) => {
+        addServerGroup(g);
+      });
+      socket.on('group-message', (data) => {
+        const chat = chats.find((c) => c.id === data.groupId);
+        if (!chat) { addServerGroup({ id: data.groupId, type: 'group', name: 'Группа', owner: '', members: [data.from] }); }
+        const target = chats.find((c) => c.id === data.groupId);
+        if (!target) return;
+        if (data.audio !== undefined && data.audio !== null && data.audio !== '') {
+          let url = data.audio;
+          try {
+            const bytes = new Uint8Array(data.audio);
+            const blob = new Blob([bytes], { type: data.audioMime || 'audio/webm' });
+            url = URL.createObjectURL(blob);
+          } catch (e) { url = typeof data.audio === 'string' ? data.audio : url; }
+          target.messages.push({ type: 'audio', url: url, own: data.from.toLowerCase() === myName.toLowerCase(), sender: data.from });
+        } else {
+          target.messages.push({ type: 'text', text: data.text || '', own: data.from.toLowerCase() === myName.toLowerCase(), sender: data.from });
+        }
+        if (target === currentChat) renderMessages();
+      });
     }
 
     let pc = null, localStream = null, inCall = false, caller = false, currentPeer = '', callTimer = null, pendingAnswer = null;
@@ -458,8 +589,13 @@
     function sendMsg() {
       const t = input.value.trim();
       if (!t || !currentChat) return;
-      const peer = peerName(currentChat);
-      if (socket && peer) socket.emit('message', { to: peer, from: myName, text: t });
+      const isGroup = currentChat.type === 'group' || currentChat.type === 'channel';
+      if (isGroup) {
+        if (socket) socket.emit('group-message', { groupId: currentChat.id, from: myName, text: t });
+      } else {
+        const peer = peerName(currentChat);
+        if (socket && peer) socket.emit('message', { to: peer, from: myName, text: t });
+      }
       appendText(t, true);
       currentChat.messages.push({ type: 'text', text: t, own: true, sender: myName });
       input.value = '';
@@ -467,13 +603,18 @@
     function sendAll() {
       if (!currentChat) return;
       if (recordedBlob) {
-        const peer = peerName(currentChat);
+        const isGroup = currentChat.type === 'group' || currentChat.type === 'channel';
         const url = URL.createObjectURL(recordedBlob);
         appendAudio(url, true, myName);
         if (currentChat) currentChat.messages.push({ type: 'audio', url: url, own: true, sender: myName });
-        if (socket && peer) {
+        if (socket) {
           recordedBlob.arrayBuffer().then((buf) => {
-            socket.emit('message', { to: peer, from: myName, audio: buf, audioMime: recordedBlob.type || 'audio/webm' });
+            if (isGroup) {
+              socket.emit('group-message', { groupId: currentChat.id, from: myName, audio: buf, audioMime: recordedBlob.type || 'audio/webm' });
+            } else {
+              const peer = peerName(currentChat);
+              if (peer) socket.emit('message', { to: peer, from: myName, audio: buf, audioMime: recordedBlob.type || 'audio/webm' });
+            }
           });
         }
         recordedBlob = null;
@@ -522,7 +663,13 @@
     typeButtons.forEach((b) => { b.onclick = () => { typeButtons.forEach((x) => x.classList.remove('selected')); b.classList.add('selected'); selectedType = b.dataset.type; if (newChatBox.style.display === 'block') { if (selectedType === 'group') { memberSelect.style.display = 'block'; fillMemberSelect(); } else memberSelect.style.display = 'none'; } }; });
     newChatName.addEventListener('keydown', (e) => { if (e.key === 'Enter' && newChatName.value.trim()) {
       const members = Array.from(document.querySelectorAll('.member-cb:checked')).map((c) => c.value);
-      createChat(newChatName.value.trim(), selectedType, members);
+      if (socket && selectedType === 'group') {
+        socket.emit('create-group', { name: newChatName.value.trim(), type: selectedType, members: members });
+      } else if (socket && selectedType === 'channel') {
+        socket.emit('create-group', { name: newChatName.value.trim(), type: selectedType, members: members });
+      } else {
+        createChat(newChatName.value.trim(), selectedType, members);
+      }
       newChatName.value = '';
       newChatBox.style.display = 'none';
       memberSelect.style.display = 'none';
@@ -530,6 +677,7 @@
 
     let onlineUsers = [];
     let userAvatars = {};
+    let userPhones = {};
     const myDefaultAvatar = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#ccc"/><text x="50" y="55" font-size="40" text-anchor="middle" fill="#fff">👤</text></svg>');
     myAvatarEl.src = myDefaultAvatar;
     let loginAvatarData = null;
@@ -560,9 +708,12 @@
       const q = normalize(userSearch.value).toLowerCase();
       searchResults.innerHTML = '';
       if (!q) { searchResults.style.display = 'none'; return; }
-      const hits = onlineUsers.filter((u) => u.toLowerCase().includes(q) && u.toLowerCase() !== myName.toLowerCase());
+      const hits = onlineUsers.filter((u) => {
+        const phoneMatch = String(userPhones[u.toLowerCase()] || '').toLowerCase().includes(q);
+        return (u.toLowerCase().includes(q) || phoneMatch) && u.toLowerCase() !== myName.toLowerCase();
+      });
       if (hits.length === 0) { const none = document.createElement('div'); none.textContent = 'Никого не найдено'; none.style.cssText = 'color:#e74c3c;font-size:12px;'; searchResults.appendChild(none); }
-      else { hits.forEach((u) => { const hit = document.createElement('div'); hit.className = 'user-hit'; hit.textContent = '@' + u; hit.onclick = () => { createChat(u, 'group'); userSearch.value = ''; searchResults.style.display = 'none'; searchResults.innerHTML = ''; }; searchResults.appendChild(hit); }); }
+      else { hits.forEach((u) => { const hit = document.createElement('div'); hit.className = 'user-hit'; hit.textContent = '@' + u + (userPhones[u.toLowerCase()] ? '  ' + userPhones[u.toLowerCase()] : ''); hit.onclick = () => { createChat(u, 'group'); userSearch.value = ''; searchResults.style.display = 'none'; searchResults.innerHTML = ''; }; searchResults.appendChild(hit); }); }
       searchResults.style.display = 'block';
     });
 
