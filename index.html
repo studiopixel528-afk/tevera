@@ -63,11 +63,22 @@
     #input { flex:1; padding:8px; font-size:14px; }
     button { padding:8px 16px; cursor:pointer; }
 
-    #call-panel { display:none; position:fixed; inset:0; background:var(--bg); z-index:200; align-items:center; justify-content:center; gap:16px; flex-direction:column; }
-    #call-status { font-size:20px; font-weight:bold; }
-    #call-panel button { padding:12px 24px; cursor:pointer; border-radius:10px; border:none; font-size:15px; }
+    #call-panel { display:none; position:fixed; inset:0; background:var(--bg); z-index:200; align-items:center; justify-content:center; gap:24px; flex-direction:column; }
+    #call-avatar { font-size:64px; background:var(--msg); width:120px; height:120px; border-radius:50%; display:flex; align-items:center; justify-content:center; }
+    #call-status { font-size:22px; font-weight:bold; text-align:center; }
+    #call-controls { display:flex; gap:40px; align-items:center; }
+    #call-panel button { width:72px; height:72px; cursor:pointer; border-radius:50%; border:none; font-size:30px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.3); }
     #call-answer { background:#2ecc71; color:#fff; }
+    #call-answer:hover { background:#27ae60; }
     #call-end { background:#e74c3c; color:#fff; }
+    #call-end:hover { background:#c0392b; }
+
+    /* Аватарки */
+    .avatar { width:40px; height:40px; border-radius:50%; object-fit:cover; background:var(--msg); flex-shrink:0; }
+    .chat-item { display:flex; align-items:center; gap:10px; }
+    #who { display:flex; align-items:center; gap:10px; }
+    #avatar-input { display:none; }
+    #my-avatar { max-width:60px; max-height:60px; border-radius:50%; object-fit:cover; }
   </style>
 </head>
 <body>
@@ -86,7 +97,11 @@
       <div id="sidebar-head"><span>Чаты</span><button id="add-btn" title="Добавить чат">+</button></div>
       <div id="search-row"><input id="user-search" placeholder="🔍 Найти по юзернейму..."></div>
       <div id="search-results"></div>
-      <div id="who">Вы вошли как <b id="my-name"></b></div>
+      <div id="who">
+        <input type="file" id="avatar-input" accept="image/*" style="display:none;">
+        <img id="my-avatar" title="Нажмите, чтобы сменить аватарку" onclick="document.getElementById('avatar-input').click()" style="cursor:pointer;">
+        <div>Вы вошли как <b id="my-name"></b></div>
+      </div>
       <div id="new-chat-box">
         <div id="new-chat-type"><button data-type="channel">Канал</button><button data-type="group" class="selected">Группа</button></div>
         <input id="new-chat-name" placeholder="Введите название...">
@@ -110,10 +125,11 @@
   </div>
 
   <div id="call-panel">
+    <div id="call-avatar">👤</div>
     <div id="call-status">Звонок...</div>
-    <div>
-      <button id="call-answer" style="display:none;">📞 Ответить</button>
-      <button id="call-end">📵 Завершить</button>
+    <div id="call-controls">
+      <button id="call-answer" style="display:none;" title="Ответить">📞</button>
+      <button id="call-end" title="Сбросить">📞</button>
     </div>
   </div>
 
@@ -141,6 +157,8 @@
     const userSearch = document.getElementById('user-search');
     const searchResults = document.getElementById('search-results');
     const myNameEl = document.getElementById('my-name');
+    const myAvatarEl = document.getElementById('my-avatar');
+    const avatarInput = document.getElementById('avatar-input');
     const callPanel = document.getElementById('call-panel');
     const callStatus = document.getElementById('call-status');
     const callAnswer = document.getElementById('call-answer');
@@ -170,17 +188,47 @@
     loginBtn.onclick = () => {
       const name = normalize(loginInput.value);
       if (!name) { loginErr.textContent = 'Введите юзернейм'; return; }
-      const lower = name.toLowerCase();
-      if (allUsers.some((u) => u.toLowerCase() === lower)) { loginErr.textContent = 'Этот юзернейм уже занят'; return; }
-      if (!allUsers.includes(name)) { allUsers.push(name); saveUsers(); }
-      myName = name;
-      localStorage.setItem(lsSelfKey, name);
-      enterApp();
+      loginBtn.disabled = true;
+      const attempt = () => {
+        try {
+          socket = io();
+        } catch (e) {
+          loginBtn.disabled = false;
+          loginErr.textContent = 'Сервер недоступен';
+          return;
+        }
+        socket.emit('try-register', name, (res) => {
+          if (res && res.ok) {
+            myName = res.username;
+            localStorage.setItem(lsSelfKey, myName);
+            enterApp();
+          } else {
+            socket.close();
+            loginBtn.disabled = false;
+            loginErr.textContent = 'Этот юзернейм уже занят';
+          }
+        });
+      };
+      attempt();
     };
     loginInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') loginBtn.onclick(); });
 
     const savedSelf = localStorage.getItem(lsSelfKey);
-    if (savedSelf && allUsers.includes(savedSelf)) { myName = savedSelf; enterApp(); }
+    if (savedSelf) {
+      // Попытка восстановить сессию: подключаемся и регистрируем сохранённое имя, но имени могло уже не быть
+      try { socket = io(); } catch (e) { socket = null; }
+      if (socket) {
+        socket.emit('try-register', savedSelf, (res) => {
+          if (res && res.ok) {
+            myName = res.username;
+            enterApp();
+          } else {
+            localStorage.removeItem(lsSelfKey);
+            if (socket) socket.close();
+          }
+        });
+      }
+    }
 
     function createChat(name, type) {
       const chat = { name: (type === 'channel' ? '📢 ' : '👥 ') + name, type: type, owner: myName, messages: [] };
@@ -193,7 +241,14 @@
       chats.forEach((chat) => {
         const item = document.createElement('div');
         item.className = 'chat-item' + (chat === currentChat ? ' active' : '');
-        item.textContent = chat.name;
+        const img = document.createElement('img');
+        img.className = 'avatar';
+        const peer = peerName(chat);
+        img.src = (chat.type === 'group' && userAvatars[peer.toLowerCase()]) ? userAvatars[peer.toLowerCase()] : myDefaultAvatar;
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = chat.name;
+        item.appendChild(img);
+        item.appendChild(nameSpan);
         item.onclick = () => openChat(chat);
         chatList.appendChild(item);
       });
@@ -220,21 +275,30 @@
     }
 
     function connectServer() {
-      try { socket = io(); } catch (e) { return; }
+      if (!socket) {
+        try { socket = io(); } catch (e) { return; }
+      }
       socket.emit('register', myName);
+      if (socket._hooked) return;
+      socket._hooked = true;
       socket.on('message', (data) => {
-        const target = chats.find((c) => peerName(c) === data.from);
+        const target = chats.find((c) => peerName(c).toLowerCase() === String(data.from).toLowerCase());
         if (!target) return;
         if (data.audio) target.messages.push({ type: 'audio', url: data.audio, own: false, sender: data.from });
         else target.messages.push({ type: 'text', text: data.text, own: false, sender: data.from });
         if (target === currentChat) renderMessages();
       });
-      socket.on('incoming-call', (data) => { currentPeer = data.from; callAnswer.style.display = 'inline-block'; callStatus.textContent = 'Входящий звонок от @' + data.from; callPanel.style.display = 'flex'; });
+      socket.on('incoming-call', (data) => { currentPeer = data.from; caller = false; callAnswer.style.display = 'flex'; callEnd.innerHTML = '📞'; callStatus.textContent = 'Входящий звонок от @' + data.from; callPanel.style.display = 'flex'; });
       socket.on('call-offer', (data) => { currentPeer = data.from; answerOffer(data.offer); });
       socket.on('call-answer', (data) => { if (pc) pc.setRemoteDescription(new RTCSessionDescription(data.answer)); });
       socket.on('ice-candidate', (data) => { if (pc) pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {}); });
       socket.on('call-ended', () => endCallUI());
-      socket.on('user-list', (list) => { onlineUsers = list || []; });
+      socket.on('user-list', (list) => {
+        if (list && list.users) { onlineUsers = list.users || []; userAvatars = list.avatars || {}; }
+        else { onlineUsers = list || []; userAvatars = {}; }
+        renderChats();
+      });
+      socket.on('my-avatar', (a) => { if (myAvatarEl) myAvatarEl.src = a || myDefaultAvatar; });
     }
 
     let pc = null, localStream = null, inCall = false, caller = false, currentPeer = '', callTimer = null, pendingAnswer = null;
@@ -245,6 +309,7 @@
       if (!peer) { alert('Выберите чат с собеседником'); return; }
       currentPeer = peer; caller = true;
       callAnswer.style.display = 'none';
+      callEnd.innerHTML = '📞';
       callStatus.textContent = 'Звонок @' + peer + '...';
       callPanel.style.display = 'flex';
       socket.emit('call-user', { to: peer, from: myName });
@@ -252,6 +317,7 @@
     };
     callAnswer.onclick = () => {
       callAnswer.style.display = 'none';
+      callEnd.innerHTML = '📞';
       if (socket) socket.emit('call-answer', { to: currentPeer, from: myName, answer: pendingAnswer });
       startCallTimer();
     };
@@ -264,15 +330,18 @@
       if (localStream) { localStream.getTracks().forEach((t) => t.stop()); localStream = null; }
       if (pc) { pc.close(); pc = null; }
       inCall = false;
+      callEnd.innerHTML = '📞';
     }
     function startCallTimer() {
       let sec = 0;
       clearInterval(callTimer);
       callTimer = setInterval(() => { sec++; if (inCall) { const m = String(Math.floor(sec/60)).padStart(2,'0'); const s = String(sec%60).padStart(2,'0'); callStatus.textContent = 'Звонок с @' + currentPeer + '  ' + m + ':' + s; } }, 1000);
     }
+    const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+
     async function makeOffer() {
       inCall = true;
-      pc = new RTCPeerConnection();
+      pc = new RTCPeerConnection(rtcConfig);
       setupPeer();
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -280,7 +349,7 @@
     }
     async function answerOffer(offer) {
       inCall = true;
-      pc = new RTCPeerConnection();
+      pc = new RTCPeerConnection(rtcConfig);
       setupPeer();
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       pendingAnswer = await pc.createAnswer();
@@ -290,12 +359,31 @@
       navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => { localStream = stream; stream.getTracks().forEach((t) => pc.addTrack(t, stream)); }).catch((e) => alert('Нет микрофона: ' + e.message));
       pc.ontrack = (ev) => { const audio = new Audio(); audio.srcObject = ev.streams[0]; audio.play(); };
       pc.onicecandidate = (e) => { if (e.candidate && socket) socket.emit('ice-candidate', { to: currentPeer, from: myName, candidate: e.candidate }); };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          callAnswer.style.display = 'none';
+          startCallTimer();
+        } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+          if (inCall) { if (socket && currentPeer) socket.emit('call-end', { to: currentPeer, from: myName }); endCallUI(); }
+        }
+      };
+    }
+
+    function senderAvatar(sender) {
+      return userAvatars[String(sender || '').toLowerCase()] || myDefaultAvatar;
     }
 
     function appendText(text, own, sender) {
       const wrap = document.createElement('div');
       wrap.className = 'msg-wrap' + (own ? ' own' : '');
-      if (!own) { const s = document.createElement('div'); s.className = 'msg-sender'; s.textContent = '@' + sender; wrap.appendChild(s); }
+      if (!own) {
+        const head = document.createElement('div');
+        head.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:2px;';
+        const av = document.createElement('img'); av.className = 'avatar'; av.style.width='24px'; av.style.height='24px'; av.src = senderAvatar(sender);
+        const s = document.createElement('span'); s.className = 'msg-sender'; s.textContent = '@' + sender;
+        head.appendChild(av); head.appendChild(s);
+        wrap.appendChild(head);
+      }
       const d = document.createElement('div'); d.className = 'msg'; d.textContent = text;
       const del = document.createElement('button'); del.className = 'del-btn'; del.textContent = 'Удалить';
       del.onclick = () => wrap.remove();
@@ -305,7 +393,14 @@
     function appendAudio(url, own, sender) {
       const wrap = document.createElement('div');
       wrap.className = 'msg-wrap' + (own ? ' own' : '');
-      if (!own) { const s = document.createElement('div'); s.className = 'msg-sender'; s.textContent = '@' + sender; wrap.appendChild(s); }
+      if (!own) {
+        const head = document.createElement('div');
+        head.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:2px;';
+        const av = document.createElement('img'); av.className = 'avatar'; av.style.width='24px'; av.style.height='24px'; av.src = senderAvatar(sender);
+        const s = document.createElement('span'); s.className = 'msg-sender'; s.textContent = '@' + sender;
+        head.appendChild(av); head.appendChild(s);
+        wrap.appendChild(head);
+      }
       const play = document.createElement('button'); play.className = 'play-btn'; play.textContent = '▶ Воспроизвести';
       const audio = document.createElement('audio'); audio.src = url;
       play.onclick = () => audio.paused ? audio.play() : audio.pause();
@@ -333,7 +428,24 @@
       currentChat.messages.push({ type: 'text', text: t, own: true, sender: myName });
       input.value = '';
     }
-    send.addEventListener('click', sendMsg);
+    function sendAll() {
+      if (!currentChat) return;
+      if (recordedBlob) {
+        const peer = peerName(currentChat);
+        const url = URL.createObjectURL(recordedBlob);
+        appendAudio(url, true, myName);
+        if (currentChat) currentChat.messages.push({ type: 'audio', url: url, own: true, sender: myName });
+        if (socket && peer) {
+          recordedBlob.arrayBuffer().then((buf) => {
+            socket.emit('message', { to: peer, from: myName, audio: buf, audioMime: recordedBlob.type || 'audio/webm' });
+          });
+        }
+        recordedBlob = null;
+      } else {
+        sendMsg();
+      }
+    }
+    send.addEventListener('click', sendAll);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMsg(); });
 
     addBtn.onclick = () => { newChatBox.style.display = newChatBox.style.display === 'none' ? 'block' : 'none'; if (newChatBox.style.display === 'block') newChatName.focus(); };
@@ -341,6 +453,21 @@
     newChatName.addEventListener('keydown', (e) => { if (e.key === 'Enter' && newChatName.value.trim()) { createChat(newChatName.value.trim(), selectedType); newChatName.value = ''; newChatBox.style.display = 'none'; } });
 
     let onlineUsers = [];
+    let userAvatars = {};
+    const myDefaultAvatar = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#ccc"/><text x="50" y="55" font-size="40" text-anchor="middle" fill="#fff">👤</text></svg>');
+    myAvatarEl.src = myDefaultAvatar;
+
+    avatarInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        myAvatarEl.src = reader.result;
+        if (socket) socket.emit('set-avatar', { avatar: reader.result });
+      };
+      reader.readAsDataURL(file);
+      avatarInput.value = '';
+    };
 
     userSearch.addEventListener('input', () => {
       const q = normalize(userSearch.value).toLowerCase();
